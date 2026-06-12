@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>MSSB 3D Batting Visualizer</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --panel-bg: #16161f;
+    --panel-fg: #e8e8f0;
+    --accent: #45d4ff;
+    --border: #2c2c3a;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #0a0a12; color: var(--panel-fg); font: 14px/1.4 -apple-system, "Segoe UI", sans-serif; }
+  #app { display: flex; height: 100%; }
+  #panel {
+    width: 360px; min-width: 360px; padding: 12px; overflow-y: auto;
+    background: var(--panel-bg); border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  #panel h1 { font-size: 16px; margin: 0; color: var(--accent); }
+  label { font-size: 12px; opacity: 0.85; display: block; margin-bottom: 3px; }
+  label.inline { display: flex; align-items: center; gap: 4px; cursor: pointer; margin: 0; }
+  select, input[type=number], button {
+    width: 100%; background: #0e0e16; color: var(--panel-fg);
+    border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; font: inherit;
+  }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  input[type=checkbox] { accent-color: var(--accent); width: 14px; height: 14px; }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  .btnrow { display: flex; gap: 4px; flex-wrap: wrap; }
+  .btnrow .seg { width: auto; flex: 1 0 auto; padding: 4px 8px; font-size: 12px; }
+  .seg.on { background: var(--accent); color: #04151c; border-color: var(--accent); font-weight: 600; }
+  .row { margin: 7px 0; }
+  .val { color: var(--accent); }
+  #status { font-size: 12px; min-height: 1em; color: #ff8896; white-space: pre-wrap; }
+  details.section, #panel > details {
+    border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px;
+  }
+  details summary { cursor: pointer; font-size: 13px; color: var(--accent); user-select: none; }
+  details pre { font-size: 11px; overflow: auto; max-height: 280px; }
+  #viewbar { display: flex; gap: 6px; align-items: center; }
+  #viewbar select { flex: 1; }
+  #viewbar .seg { width: auto; padding: 5px 12px; }
+  #hint { font-size: 11px; opacity: 0.55; }
+  #viewport { position: relative; flex: 1; min-width: 0; background: #0a0a12; }
+  #viewport canvas { display: block; }
+  #labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+  .lbl {
+    color: #fff; font-size: 12px; text-shadow: 0 0 4px #000, 0 0 4px #000;
+    white-space: pre; pointer-events: none;
+  }
+  .lbl.stream {
+    font: 600 13px/1.35 -apple-system, "Segoe UI", sans-serif;
+    background: rgba(10, 14, 22, 0.62); border-radius: 8px; padding: 3px 8px;
+    text-shadow: none; backdrop-filter: blur(2px);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+  }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="app">
+  <div id="panel">
+    <h1>MSSB 3D Batting Visualizer</h1>
+    <div id="viewbar">
+      <select id="stadium" title="Stadium"></select>
+      <button class="seg on" data-mode="stream" type="button">Stream</button>
+      <button class="seg" data-mode="debug" type="button">Debug</button>
+    </div>
+    <div id="controls"></div>
+    <div id="status"></div>
+    <details><summary>Hit details</summary><pre id="detailsPre"></pre></details>
+    <details><summary>Request JSON</summary><pre id="jsonPre"></pre></details>
+    <details><summary>Instructions</summary><pre id="instructionsPre">loading…</pre></details>
+    <div id="hint">Drag to orbit &middot; right-drag to pan &middot; scroll to zoom.<br>
+    Changes re-simulate instantly.</div>
+  </div>
+  <div id="viewport"><div id="labels"></div></div>
+</div>
+<script type="module" src="/app.js"></script>
+</body>
+</html>

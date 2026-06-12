@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "batting-visualizer-web",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["web_server.py", "5261"],
+      "port": 5261
+    }
+  ]
+}
