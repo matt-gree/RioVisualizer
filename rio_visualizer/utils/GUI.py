@@ -225,10 +225,10 @@ class ParameterWindow:
 
             [sg.Text("Generate n Random Hits"),sg.InputText(key="-GEN-RAND-HITS-", enable_events=True)], 
             [sg.Text("Stadium Path"),sg.Combo(values=("rio_visualizer/data/stadiums/Mario Stadium.json", 
-                                                      "rio_visualizer/data/stadiums/Peach's Castle.json", 
+                                                      "rio_visualizer/data/stadiums/Peach Garden.json",
                                                       "rio_visualizer/data/stadiums/Wario Palace.json", 
                                                       "rio_visualizer/data/stadiums/Yoshi Park.json", 
-                                                      "rio_visualizer/data/stadiums/Donkey Kong Jungle.json", 
+                                                      "rio_visualizer/data/stadiums/DK Jungle.json",
                                                       "rio_visualizer/data/stadiums/Bowser Castle.json", 
                                                       "rio_visualizer/data/stadiums/Toy Field.json"), 
                                                default_value=DEFAULT_STADIUM,

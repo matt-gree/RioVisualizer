@@ -53,7 +53,7 @@ export const THEMES = {
     foulMult: 0.74,
   },
 
-  'Donkey Kong Jungle': {
+  'DK Jungle': {
     label: 'Volcano Jungle',
     skyTop: '#9fb4bc', skyBottom: '#dde8e6',
     fog: '#cfdcd8', fogDensity: 0.0048,
@@ -69,7 +69,7 @@ export const THEMES = {
     foulMult: 0.78,
   },
 
-  "Peach's Castle": {
+  'Peach Garden': {
     label: 'Royal Garden',
     skyTop: '#7fa9e0', skyBottom: '#f4cfd9',
     fog: '#e9d4dc', fogDensity: 0.003,
