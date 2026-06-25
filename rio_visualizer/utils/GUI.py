@@ -1,9 +1,9 @@
-from data.constants import *
+from rio_visualizer.data.constants import *
 import PySimpleGUI as sg
-from src.calc import calc_batting
+from rio_visualizer.calc import calc_batting
 import time, json, copy
 
-DEFAULT_STADIUM = "data/Stadiums/Mario Stadium.json"
+DEFAULT_STADIUM = "rio_visualizer/data/stadiums/Mario Stadium.json"
 
 fieldersShown = set()
 fielder_charID = [0] * 9
@@ -142,7 +142,7 @@ input_params = {
     "units_feet": False,
     "show_curve_on_ground" : False,
     "show_max_height" : False,
-    "stadium_path": "Stadiums/Mario Stadium.json"
+    "stadium_path": "rio_visualizer/data/stadiums/Mario Stadium.json"
 }
 
 
@@ -224,13 +224,13 @@ class ParameterWindow:
              sg.Checkbox("Show Curve Along Ground", default=input_params["show_curve_on_ground"], key="-SHOW-CURVE-ON-GROUND-", enable_events=True)],
 
             [sg.Text("Generate n Random Hits"),sg.InputText(key="-GEN-RAND-HITS-", enable_events=True)], 
-            [sg.Text("Stadium Path"),sg.Combo(values=("data/Stadiums/Mario Stadium.json", 
-                                                      "data/Stadiums/Peach's Castle.json", 
-                                                      "data/Stadiums/Wario Palace.json", 
-                                                      "data/Stadiums/Yoshi Park.json", 
-                                                      "data/Stadiums/Donkey Kong Jungle.json", 
-                                                      "data/Stadiums/Bowser Castle.json", 
-                                                      "data/Stadiums/Toy Field.json"), 
+            [sg.Text("Stadium Path"),sg.Combo(values=("rio_visualizer/data/stadiums/Mario Stadium.json", 
+                                                      "rio_visualizer/data/stadiums/Peach's Castle.json", 
+                                                      "rio_visualizer/data/stadiums/Wario Palace.json", 
+                                                      "rio_visualizer/data/stadiums/Yoshi Park.json", 
+                                                      "rio_visualizer/data/stadiums/Donkey Kong Jungle.json", 
+                                                      "rio_visualizer/data/stadiums/Bowser Castle.json", 
+                                                      "rio_visualizer/data/stadiums/Toy Field.json"), 
                                                default_value=DEFAULT_STADIUM,
                                                key="-STADIUM-",
                                                enable_events=True)],

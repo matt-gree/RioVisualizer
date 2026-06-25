@@ -1,17 +1,17 @@
 import time, json, copy
 
-import utils.get_data
-from src.calc import calc_batting
+from rio_visualizer.utils import get_data
+from rio_visualizer.calc import calc_batting
 import PySimpleGUI as sg
 from random import randint
-from utils.viscolor import contrast_color
-from utils.stadium import *
-from data.constants import *
-from utils.GUI import *
+from rio_visualizer.utils.viscolor import contrast_color
+from rio_visualizer.utils.stadium import *
+from rio_visualizer.data.constants import *
+from rio_visualizer.utils.GUI import *
 
 from os.path import exists
 
-from utils.vec_mtx import dict_to_vec3
+from rio_visualizer.utils.vec_mtx import dict_to_vec3
 
 render_dimensions = (1280, 720)
 
@@ -201,7 +201,7 @@ class RenderedBattingScene:
             handedness = self.batting_json.get("handedness", 0)
             batter_id = self.batting_json.get("batter_id", 0)
 
-            hbox_batter = utils.get_data.get_hitbox(batter_id)
+            hbox_batter = get_data.get_hitbox(batter_id)
                 
             batter_width = hbox_batter[0] / 100
             batter_hitbox_near =  hbox_batter[1] / 100
@@ -229,7 +229,7 @@ class RenderedBattingScene:
                 )
             
             self.screen.draw_text(
-                text                = utils.get_data.get_name(batter_id), 
+                text                = get_data.get_name(batter_id), 
                 start_point         = Vector3(batter_x + batter_offset_x, slight_offset, batter_offset_z - slight_offset), 
                 direction_vector    = Vector3(1, 0, 0), 
                 text_size           = 24, 
@@ -248,7 +248,7 @@ class RenderedBattingScene:
             if handedness == 1:
                 batter_x *= -1
 
-            near_far = utils.get_data.get_bat_hitbox(batter_id, 0, handedness)
+            near_far = get_data.get_bat_hitbox(batter_id, 0, handedness)
             
             for p in near_far:
                 self.screen.draw_cube(

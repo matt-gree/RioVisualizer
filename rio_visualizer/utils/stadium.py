@@ -1,6 +1,6 @@
-from src.visualizer.visualizer import *
-from utils.vec_mtx import vec3_to_dict, dict_to_vec3
-from utils.viscolor import VisColors
+from rio_visualizer.visualizer.visualizer import *
+from rio_visualizer.utils.vec_mtx import vec3_to_dict, dict_to_vec3
+from rio_visualizer.utils.viscolor import VisColors
 
 # StadiumTriangleCollectionType = int
 # STADIUM_TRIANGLE_COLLECTION_SINGLES = StadiumTriangleCollectionType(0)

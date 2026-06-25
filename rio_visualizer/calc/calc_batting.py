@@ -1,9 +1,9 @@
 import math
 from random import random
-from utils.math_helpers import floor, LinearInterpolateToNewRange, valueToDegrees
-from utils.helpers import isEmptyOrSpaces
-from data.constants import *
-from src.calc.angle import AdjustBallAngle, mssbConvertToRadians, degreesToRadians
+from rio_visualizer.utils.math_helpers import floor, LinearInterpolateToNewRange, valueToDegrees
+from rio_visualizer.utils.helpers import isEmptyOrSpaces
+from rio_visualizer.data.constants import *
+from rio_visualizer.calc.angle import AdjustBallAngle, mssbConvertToRadians, degreesToRadians
 # from src.calc.rand import WeightedRandomIndex
 
 

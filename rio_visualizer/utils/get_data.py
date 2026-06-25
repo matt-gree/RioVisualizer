@@ -1,4 +1,4 @@
-from data.constants import HBP_ARRAY, CHARACTER_INDICES, BATTER_HITBOXES, BATTING_REACHES, STATS
+from rio_visualizer.data.constants import HBP_ARRAY, CHARACTER_INDICES, BATTER_HITBOXES, BATTING_REACHES, STATS
 
 
 def get_hitbox(char_id) -> tuple:

@@ -3,7 +3,7 @@ from OpenGL.GL import *
 from OpenGL.GLU import *
 import pygame
 import sys
-from utils.vec_mtx import *
+from rio_visualizer.utils.vec_mtx import *
 
 cached_fonts = {}
 cached_strings = {}
