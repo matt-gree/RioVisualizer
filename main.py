@@ -1,7 +1,7 @@
 import time, json, copy
 
 from rio_visualizer.utils import get_data
-from rio_visualizer.calc import calc_batting
+from rio_visualizer import api
 import PySimpleGUI as sg
 from random import randint
 from rio_visualizer.utils.viscolor import contrast_color
@@ -11,7 +11,7 @@ from rio_visualizer.utils.GUI import *
 
 from os.path import exists
 
-from rio_visualizer.utils.vec_mtx import dict_to_vec3
+from pygame import Vector3
 
 render_dimensions = (1280, 720)
 
@@ -207,8 +207,8 @@ class RenderedBattingScene:
             batter_hitbox_near =  hbox_batter[1] / 100
             batter_hitbox_far =  hbox_batter[2] / -100
 
-            batter_offset_x = calc_batting.BATTER_HITBOXES[batter_id]["EasyBattingSpotHorizontal"]
-            batter_offset_z = calc_batting.BATTER_HITBOXES[batter_id]["EasyBattingSpotVertical"]
+            batter_offset_x = BATTER_HITBOXES[batter_id]["EasyBattingSpotHorizontal"]
+            batter_offset_z = BATTER_HITBOXES[batter_id]["EasyBattingSpotVertical"]
 
             if handedness == 1:
                 batter_x *= -1
@@ -273,11 +273,14 @@ class RenderedBattingScene:
                 kwargs.setdefault("rand_2", 20008)
                 kwargs.setdefault("rand_3", 1628)
 
-                res = calc_batting.hit_ball(**kwargs)["FlightDetails"]["Path"]
+                try:
+                    res = api.simulate_kwargs(**kwargs).trajectory
+                except Exception:
+                    res = []
                 if len(res) > 0:
                     new_points = [
-                        dict_to_vec3(x)
-                        for x 
+                        Vector3(p[0], p[1], p[2])
+                        for p
                         in res
                     ]
                     
@@ -358,8 +361,13 @@ class RenderedBattingScene:
                     kwargs.setdefault("rand_2", randint(0, (2**15)-1))
                     kwargs.setdefault("rand_3", randint(0, (2**15)-1))
 
-                    all_hit_points = calc_batting.hit_ball(**kwargs)["FlightDetails"]["Path"]
-                    all_hit_points = [dict_to_vec3(x) for x in all_hit_points]
+                    try:
+                        traj = api.simulate_kwargs(**kwargs).trajectory
+                    except Exception:
+                        continue
+                    if len(traj) == 0:
+                        continue
+                    all_hit_points = [Vector3(p[0], p[1], p[2]) for p in traj]
                     final_point = all_hit_points[-1]
                     if (*final_point,) not in s:
                         s.add((*final_point,))
