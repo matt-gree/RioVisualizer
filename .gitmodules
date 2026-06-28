@@ -1,0 +1,4 @@
+[submodule "pyRio"]
+	path = pyRio
+	url = https://github.com/nuche17/pyRio.git
+	branch = hitSimulatorBranch
