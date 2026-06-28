@@ -14,14 +14,21 @@ from pathlib import Path
 from random import randint
 
 from rio_visualizer.utils import get_data
-from rio_visualizer.calc import calc_batting
 from rio_visualizer.data.constants import (
+    BATTER_HITBOXES,
+    BUNT,
     CHARACTERNAME_TO_ID,
     FIELDER_DIVE_RANGE,
     FIELDER_JOGGING_SPEED,
     FIELDER_LOCKOUT_BYPOSITION,
     FIELDER_SLIDINGCATCH_ABILITY,
     FIELDER_STARTING_COORDINATES,
+)
+from pyRio.hit_simulator.hit_simulation import (
+    BatterAttributes,
+    HitInputs,
+    HitOverrides,
+    simulate_hit,
 )
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
@@ -33,8 +40,130 @@ DEFAULT_RANDS = {"rand_1": 1565, "rand_2": 20008, "rand_3": 1628}
 DEFAULT_STADIUM = "Mario Stadium"
 
 
-def path_to_points(path):
-    return [[p["X"], p["Y"], p["Z"]] for p in path]
+# ------------------------------------------------------------------ pyRio glue
+# The front end speaks the legacy kwarg schema (numeric char ids, hit_type,
+# num_stars, override_*). These helpers translate that into pyRio's HitInputs /
+# HitOverrides, run simulate_hit, and translate the HitResult back.
+
+def _resolve_star(is_star_hit, swing, num_stars, charge_up, is_captain,
+                  captain_star_hit_pitch, non_captain_star_swing):
+    """Reduce the visualizer's (num_stars, is_batter_captain) controls to pyRio's
+    is_star / five_star_dinger booleans, mirroring the pre-pipeline star
+    resolution the old calc_batting.calculateValues did. pyRio's own
+    _resolve_star_swing then performs the captain/non-captain split from the
+    character's attributes. Returns (is_star, five_star_dinger)."""
+    if not is_star_hit or swing == BUNT or num_stars == 0:
+        return False, False
+    # Fully-charged 5-star swing -> Moonshot (the connected 5-star dinger).
+    if charge_up == 1.0 and num_stars >= 5:
+        return True, True
+    if captain_star_hit_pitch == 0:
+        # Non-captain character: only a real non-captain star swing qualifies.
+        if non_captain_star_swing == 0:
+            return False, False
+        return True, False
+    if is_captain:
+        return num_stars >= 1, False
+    # Captain-class character not set as this lineup's captain needs 2+ stars.
+    return num_stars >= 2, False
+
+
+def build_hit_inputs(**kwargs):
+    """Build a pyRio HitInputs from the legacy front-end kwargs. Unknown keys
+    (display toggles, fielder options, etc.) are ignored."""
+    batter_id = kwargs.get("batter_id", 0)
+    swing = kwargs.get("hit_type", 0)
+    charge_up = kwargs.get("charge_up", 0.0)
+
+    attrs = BatterAttributes.from_name(batter_id)
+    is_star, five_star_dinger = _resolve_star(
+        kwargs.get("is_star_hit", False),
+        swing,
+        kwargs.get("num_stars", 4),
+        charge_up,
+        kwargs.get("is_batter_captain", False),
+        attrs.captain_star_hit_pitch,
+        attrs.non_captain_star_swing,
+    )
+
+    starred = kwargs.get("is_starred", False)
+    overrides = HitOverrides(
+        vertical_zone=kwargs.get("override_vertical_range"),
+        vertical_angle=kwargs.get("override_vertical_angle"),
+        horizontal_angle=kwargs.get("override_horizontal_angle"),
+        power=kwargs.get("override_power"),
+    )
+
+    rng = {}
+    if kwargs.get("rand_1") is not None:
+        rng["rng1"] = kwargs["rand_1"]
+    if kwargs.get("rand_2") is not None:
+        rng["rng2"] = kwargs["rand_2"]
+    if kwargs.get("rand_3") is not None:
+        rng["rng3"] = kwargs["rand_3"]
+
+    return HitInputs(
+        batter_name=batter_id,
+        pitcher_name=kwargs.get("pitcher_id", 0),
+        pitch_type_val=kwargs.get("pitch_type", 0),
+        pos_x=kwargs.get("batter_x", 0.0),
+        ball_x=kwargs.get("ball_x", 0.0),
+        ball_z=kwargs.get("ball_z", 0.0),
+        batter_hand=kwargs.get("handedness", 0),
+        swing=swing,
+        is_star=is_star,
+        five_star_dinger=five_star_dinger,
+        charge_up=charge_up,
+        charge_down=kwargs.get("charge_down", 0.0),
+        chem_links=kwargs.get("chem", 0),
+        frame=kwargs.get("frame", 2),
+        input_up=kwargs.get("stick_up", False),
+        input_down=kwargs.get("stick_down", False),
+        input_left=kwargs.get("stick_left", False),
+        input_right=kwargs.get("stick_right", False),
+        easy_batting=kwargs.get("easy_batting", False),
+        batter_stars_on=starred,
+        pitcher_stars_on=starred,
+        overrides=overrides,
+        **rng,
+    )
+
+
+def simulate_kwargs(**kwargs):
+    """Run the pyRio hit simulation for one set of legacy front-end kwargs.
+    Raises ValueError if the inputs would not make contact."""
+    return simulate_hit(build_hit_inputs(**kwargs))
+
+
+def trajectory_points(result):
+    """HitResult trajectory ((x, y, z) tuples) -> [[x, y, z], ...]."""
+    return [[p[0], p[1], p[2]] for p in result.trajectory]
+
+
+def hit_details(result):
+    """Flatten a HitResult into a JSON-serializable dict for the details panel."""
+    return {
+        "Contact": {
+            "Zone": result.contact_type_name,
+            "Quality": result.contact_quality,
+            "Absolute": result.contact_absolute,
+        },
+        "Ball": {
+            "HorizontalAngle": result.horizontal_angle,
+            "VerticalAngle": result.vertical_angle,
+            "HorizontalAngleDeg": result.horizontal_angle_deg,
+            "VerticalAngleDeg": result.vertical_angle_deg,
+            "Power": result.power,
+            "Velocity": list(result.velocity),
+            "Acceleration": list(result.acceleration),
+            "BallEnergy": result.ball_energy,
+        },
+        "Flight": {
+            "Frames": result.hang_frames,
+            "Landing": list(result.landing),
+            "Distance": result.distance,
+        },
+    }
 
 
 def compute_paths(batting_json, out):
@@ -48,12 +177,12 @@ def compute_paths(batting_json, out):
             kwargs.setdefault(k, v)
 
         try:
-            res = calc_batting.hit_ball(**kwargs)
+            result = simulate_kwargs(**kwargs)
         except Exception as e:
             out["errors"].append(f"vertical range {i}: {e!r}")
             continue
 
-        points = path_to_points(res["FlightDetails"]["Path"])
+        points = trajectory_points(result)
         if len(points) == 0:
             continue
 
@@ -65,11 +194,7 @@ def compute_paths(batting_json, out):
         })
 
         if out["details"] is None:
-            details = dict(res)
-            details["FlightDetails"] = {
-                k: v for k, v in res["FlightDetails"].items() if k != "Path"
-            }
-            out["details"] = details
+            out["details"] = hit_details(result)
 
 
 def compute_random_hits(batting_json, out):
@@ -85,13 +210,13 @@ def compute_random_hits(batting_json, out):
         kwargs.setdefault("rand_3", randint(0, (2**15) - 1))
 
         try:
-            path = calc_batting.hit_ball(**kwargs)["FlightDetails"]["Path"]
+            points = trajectory_points(simulate_kwargs(**kwargs))
         except Exception:
             continue
 
-        if len(path) == 0:
+        if len(points) == 0:
             continue
-        final = (path[-1]["X"], path[-1]["Y"], path[-1]["Z"])
+        final = tuple(points[-1])
         if final not in seen:
             seen.add(final)
             out["random_points"].append(list(final))
@@ -108,8 +233,8 @@ def compute_batter(batting_json, out):
     batter_hitbox_near = hbox_batter[1] / 100
     batter_hitbox_far = hbox_batter[2] / -100
 
-    batter_offset_x = calc_batting.BATTER_HITBOXES[batter_id]["EasyBattingSpotHorizontal"]
-    batter_offset_z = calc_batting.BATTER_HITBOXES[batter_id]["EasyBattingSpotVertical"]
+    batter_offset_x = BATTER_HITBOXES[batter_id]["EasyBattingSpotHorizontal"]
+    batter_offset_z = BATTER_HITBOXES[batter_id]["EasyBattingSpotVertical"]
 
     if handedness == 1:
         batter_x *= -1
