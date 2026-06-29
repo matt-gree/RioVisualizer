@@ -30,6 +30,13 @@ from pyRio.hit_simulator.hit_simulation import (
     HitOverrides,
     simulate_hit,
 )
+from pyRio.hit_simulator import hit_simulation as hit_sim
+from pyRio.stat_file_parser import StatObj, EventObj, EventSearch
+
+try:
+    from pyRio import rio_tags
+except Exception:  # pragma: no cover - rio_tags is optional
+    rio_tags = None
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
 STADIUM_DIR = DATA_DIR / "stadiums"
@@ -342,6 +349,235 @@ def simulate(batting_json):
     except Exception as e:
         out["errors"].append(f"batter: {e!r}")
     compute_fielders(batting_json, out)
+    return out
+
+
+# ------------------------------------------------------------- stat-file events
+# Load a decoded Rio stat file, list its (filterable) contact events, and replay
+# a chosen one through the same engine. Replays use the event's recorded
+# RNG/charge/contact, so they reproduce the actual hit rather than a what-if.
+
+# Result-category filters -> EventSearch event-number sets. "hit" is any hit;
+# the base-count variants come from hitResultEvents(n).
+_RESULT_FILTERS = {
+    "hit": lambda es: es.hitResultEvents(0),
+    "single": lambda es: es.hitResultEvents(1),
+    "double": lambda es: es.hitResultEvents(2),
+    "triple": lambda es: es.hitResultEvents(3),
+    "homerun": lambda es: es.hitResultEvents(4),
+    "out": lambda es: es.outResultEvents(),
+    "caught": lambda es: es.caughtResultEvents() | es.caughtLineDriveResultsEvents(),
+    "five_star_dinger": lambda es: es.fiveStarDingerEvents(),
+    "star_pitch": lambda es: es.starPitchEvents(),
+}
+
+# Swing types the engine can replay (bunts / no-swing are unsupported).
+_SIMULATABLE_SWINGS = {"Slap", "Charge", "Star"}
+
+
+def parse_stat(stat_json):
+    """Build a StatObj from a decoded stat-file dict."""
+    return StatObj(stat_json)
+
+
+def _active_tags(stat):
+    if rio_tags is None:
+        return frozenset()
+    try:
+        return rio_tags.active_tags_for_stat(stat)
+    except Exception:
+        return frozenset()
+
+
+def _half_label(half):
+    return "Top" if half == 0 else "Bot"
+
+
+def stat_summary(stat):
+    """Game-level metadata plus the option lists a filter UI needs."""
+    batters = {}
+    for i in range(len(stat.events())):
+        ev = EventObj(stat, i)
+        if ev.contact_dict():
+            batters.setdefault(ev.batter(), 0)
+            batters[ev.batter()] += 1
+    stadium = stat.stadium()
+    return {
+        "stadium": stadium if stadium in list_stadiums() else None,
+        "stadium_raw": stadium,
+        "away": stat.player(0),
+        "home": stat.player(1),
+        "score": [stat.score(0), stat.score(1)],
+        "innings": stat.inningsPlayed(),
+        "batters": sorted(batters),
+        "result_filters": list(_RESULT_FILTERS),
+    }
+
+
+def list_stat_events(stat, search, filters=None):
+    """Contact events (newest engine-replayable ones) matching ``filters``.
+
+    ``filters`` keys (all optional): result (one of _RESULT_FILTERS), inning
+    (int), half (0/1), batter (name). Returns lightweight summaries; no
+    simulation is run here."""
+    filters = filters or {}
+
+    candidates = None  # None = all events
+
+    def _restrict(s):
+        nonlocal candidates
+        candidates = s if candidates is None else (candidates & s)
+
+    result = filters.get("result")
+    if result and result in _RESULT_FILTERS:
+        _restrict(_RESULT_FILTERS[result](search))
+
+    inning = filters.get("inning")
+    if inning:
+        _restrict(search.inningEvents(int(inning)))
+
+    nums = sorted(candidates) if candidates is not None else range(len(stat.events()))
+
+    half = filters.get("half")
+    batter = filters.get("batter")
+
+    events = []
+    for n in nums:
+        ev = EventObj(stat, n)
+        if not ev.contact_dict():
+            continue
+        if ev.pitch_dict().get("Type of Swing") not in _SIMULATABLE_SWINGS:
+            continue
+        if half is not None and ev.half_inning() != int(half):
+            continue
+        if batter and ev.batter() != batter:
+            continue
+        events.append({
+            "event_num": ev.event_num(),
+            "inning": ev.inning(),
+            "half": _half_label(ev.half_inning()),
+            "batter": ev.batter(),
+            "pitcher": ev.pitcher(),
+            "result": ev.result_of_AB(),
+            "rbi": ev.rbi(),
+            "swing": ev.pitch_dict().get("Type of Swing"),
+        })
+    return events
+
+
+def simulate_stat_event(stat, event_num):
+    """Replay one stat-file event through the engine, returned in the same shape
+    as ``simulate()`` so the renderer can draw it unchanged."""
+    out = {
+        "paths": [],
+        "random_points": [],
+        "fielders": [],
+        "batter": None,
+        "details": None,
+        "errors": [],
+        "stadium": None,
+        "meta": None,
+    }
+    ev = EventObj(stat, int(event_num))
+    stadium = stat.stadium()
+    out["stadium"] = stadium if stadium in list_stadiums() else None
+
+    try:
+        inp = hit_sim._inputs_from_event(ev, _active_tags(stat))
+        result = simulate_hit(inp)
+    except Exception as e:
+        out["errors"].append(f"event {event_num}: {e!r}")
+        return out
+
+    points = trajectory_points(result)
+    if points:
+        out["paths"].append({
+            "points": points,
+            "final": points[-1],
+            "max_height_point": max(points, key=lambda p: p[1]),
+            "vertical_range": None,
+        })
+    out["details"] = hit_details(result)
+
+    batter_id = CHARACTERNAME_TO_ID.get(ev.batter())
+    if batter_id is not None:
+        try:
+            compute_batter(
+                {"batter_x": inp.pos_x, "handedness": inp.batter_hand, "batter_id": batter_id},
+                out,
+            )
+        except Exception as e:
+            out["errors"].append(f"batter: {e!r}")
+
+    out["meta"] = {
+        "event_num": ev.event_num(),
+        "inning": ev.inning(),
+        "half": _half_label(ev.half_inning()),
+        "batter": ev.batter(),
+        "pitcher": ev.pitcher(),
+        "result": ev.result_of_AB(),
+        "rbi": ev.rbi(),
+        "swing": ev.pitch_dict().get("Type of Swing"),
+    }
+    return out
+
+
+def simulate_stat_events(stat, search, filters=None):
+    """Replay EVERY event matching ``filters`` and return them together, one path
+    per event, in the same shape as ``simulate()`` (so the renderer draws them all
+    at once). Each path carries a ``label`` (batter + result) for reference."""
+    out = {
+        "paths": [],
+        "random_points": [],
+        "fielders": [],
+        "batter": None,
+        "details": None,
+        "errors": [],
+        "stadium": None,
+        "meta": None,
+    }
+    stadium = stat.stadium()
+    out["stadium"] = stadium if stadium in list_stadiums() else None
+
+    summaries = list_stat_events(stat, search, filters)
+    tags = _active_tags(stat)
+    first_inp = None
+    for s in summaries:
+        ev = EventObj(stat, s["event_num"])
+        try:
+            inp = hit_sim._inputs_from_event(ev, tags)
+            result = simulate_hit(inp)
+        except Exception as e:
+            out["errors"].append(f"event {s['event_num']}: {e!r}")
+            continue
+        points = trajectory_points(result)
+        if not points:
+            continue
+        if first_inp is None:
+            first_inp = inp
+        out["paths"].append({
+            "points": points,
+            "final": points[-1],
+            "max_height_point": max(points, key=lambda p: p[1]),
+            "vertical_range": None,
+            "label": f"{s['batter']} · {s['result']}",
+        })
+
+    # When the filter is pinned to one batter, draw a representative batter box.
+    batter = (filters or {}).get("batter")
+    if batter and first_inp is not None:
+        batter_id = CHARACTERNAME_TO_ID.get(batter)
+        if batter_id is not None:
+            try:
+                compute_batter(
+                    {"batter_x": first_inp.pos_x, "handedness": first_inp.batter_hand,
+                     "batter_id": batter_id},
+                    out,
+                )
+            except Exception as e:
+                out["errors"].append(f"batter: {e!r}")
+
+    out["meta"] = {"matched": len(out["paths"]), "filters": filters or {}}
     return out
 
 

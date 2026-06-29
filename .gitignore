@@ -2,3 +2,6 @@
 __pycache__/
 models/
 .claude/worktrees/
+
+# Local Rio stat files (decoded game JSONs used for replay testing)
+decoded.*.json
