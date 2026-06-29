@@ -11,6 +11,7 @@ directly; this server exists for standalone/debug use.
 """
 import json
 import sys
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlparse
@@ -20,6 +21,10 @@ from rio_visualizer import api
 ROOT = Path(__file__).resolve().parent
 WEB_DIR = ROOT / "web"
 INSTRUCTIONS = ROOT / "instructions.txt"
+
+# Loaded stat files, keyed by an id handed back to the client on upload. In-memory
+# only (cleared on restart); fine for the standalone single-user dev server.
+_STATS = {}
 
 STATIC_TYPES = {
     ".html": "text/html; charset=utf-8",
@@ -76,20 +81,65 @@ class Handler(BaseHTTPRequestHandler):
 
         self.send_json({"error": "not found"}, 404)
 
+    def read_json_body(self):
+        length = int(self.headers.get("Content-Length", 0))
+        body = json.loads(self.rfile.read(length) or b"{}")
+        return body
+
     def do_POST(self):
         path = urlparse(self.path).path
-        if path != "/api/simulate":
-            return self.send_json({"error": "not found"}, 404)
 
-        length = int(self.headers.get("Content-Length", 0))
         try:
-            batting_json = json.loads(self.rfile.read(length) or b"{}")
-            if not isinstance(batting_json, dict):
-                raise ValueError("body must be a JSON object")
+            body = self.read_json_body()
         except Exception as e:
             return self.send_json({"error": f"invalid JSON: {e}"}, 400)
 
-        self.send_json(api.simulate(batting_json))
+        if path == "/api/simulate":
+            if not isinstance(body, dict):
+                return self.send_json({"error": "body must be a JSON object"}, 400)
+            return self.send_json(api.simulate(body))
+
+        if path == "/api/stat/load":
+            # body is the decoded stat-file JSON itself
+            if not isinstance(body, dict):
+                return self.send_json({"error": "body must be a stat-file JSON object"}, 400)
+            try:
+                stat = api.parse_stat(body)
+                search = api.EventSearch(stat)
+            except Exception as e:
+                return self.send_json({"error": f"could not parse stat file: {e}"}, 400)
+            stat_id = uuid.uuid4().hex
+            _STATS[stat_id] = (stat, search)
+            return self.send_json({
+                "stat_id": stat_id,
+                "summary": api.stat_summary(stat),
+                "events": api.list_stat_events(stat, search, {}),
+            })
+
+        if path == "/api/stat/events":
+            entry = _STATS.get(body.get("stat_id"))
+            if entry is None:
+                return self.send_json({"error": "unknown stat_id (re-upload the file)"}, 404)
+            stat, search = entry
+            return self.send_json({
+                "events": api.list_stat_events(stat, search, body.get("filters") or {}),
+            })
+
+        if path == "/api/stat/simulate":
+            entry = _STATS.get(body.get("stat_id"))
+            if entry is None:
+                return self.send_json({"error": "unknown stat_id (re-upload the file)"}, 404)
+            stat, _ = entry
+            return self.send_json(api.simulate_stat_event(stat, body.get("event_num")))
+
+        if path == "/api/stat/simulate_all":
+            entry = _STATS.get(body.get("stat_id"))
+            if entry is None:
+                return self.send_json({"error": "unknown stat_id (re-upload the file)"}, 404)
+            stat, search = entry
+            return self.send_json(api.simulate_stat_events(stat, search, body.get("filters") or {}))
+
+        return self.send_json({"error": "not found"}, 404)
 
 
 def main():

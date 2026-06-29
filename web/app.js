@@ -4,6 +4,7 @@
 // picker + view-mode buttons to /api/simulate and /api/stadium. The OBS overlay
 // in PRSH is a separate, equally-thin driver over the same renderer core.
 import { buildControls } from './controls.js';
+import { buildStatPanel } from './statfile.js';
 import { HitRenderer } from './renderer.js';
 
 const renderer = new HitRenderer({
@@ -59,6 +60,19 @@ async function loadStadium(name) {
 }
 stadiumSelect.addEventListener('change', () => loadStadium(stadiumSelect.value));
 
+// Render a replayed stat-file event: switch to its stadium, then draw the hit.
+async function showStatHit(sim) {
+  if (sim.error) { statusBox.textContent = sim.error; return; }
+  statusBox.textContent = (sim.errors || []).join('\n');
+  if (sim.stadium && sim.stadium !== stadiumSelect.value) {
+    stadiumSelect.value = sim.stadium;
+    await loadStadium(sim.stadium);
+  }
+  const detail = sim.meta ? { event: sim.meta, ...sim.details } : sim.details;
+  detailsPre.textContent = detail ? JSON.stringify(detail, null, 2) : '';
+  renderer.setHit(sim, {});
+}
+
 for (const btn of document.querySelectorAll('[data-mode]')) {
   btn.addEventListener('click', () => {
     document.querySelectorAll('[data-mode]').forEach(b =>
@@ -80,6 +94,11 @@ async function init() {
   fetch('/api/instructions')
     .then(r => r.text())
     .then(t => { document.getElementById('instructionsPre').textContent = t; });
+
+  buildStatPanel(document.getElementById('statpanel'), {
+    onEvent: showStatHit,
+    onStatus: (msg) => { statusBox.textContent = msg; },
+  });
 
   const form = await buildControls(document.getElementById('controls'), onParamsChanged);
   await simulate(form.buildParams());
