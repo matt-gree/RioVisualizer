@@ -1,6 +1,6 @@
 from rio_visualizer.data.constants import *
 import PySimpleGUI as sg
-from rio_visualizer.calc import calc_batting
+from rio_visualizer import api
 import time, json, copy
 
 DEFAULT_STADIUM = "rio_visualizer/data/stadiums/Mario Stadium.json"
@@ -281,9 +281,7 @@ class ParameterWindow:
             sg.Window(f'Instructions', layout, finalize=True)
         elif event == "-SHOW-HIT-DETAILS-":
             try:
-                res_json = calc_batting.hit_ball(**self.parsed_input)
-                if "FlightDetails" in res_json and "Path" in res_json["FlightDetails"]:
-                    res_json["FlightDetails"].pop("Path")
+                res_json = api.hit_details(api.simulate_kwargs(**self.parsed_input))
                 layout = [[sg.Multiline(json.dumps(res_json, indent=2), key="-BATTING-JSON-", expand_y=True, auto_size_text=True)]]
                 sg.Window(f'Hit Details', layout, finalize=True, resizable=True)
             except Exception as e:
