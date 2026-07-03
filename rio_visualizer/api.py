@@ -49,11 +49,11 @@ def compute_paths(batting_json, out):
 
         try:
             res = calc_batting.hit_ball(**kwargs)
+            points = path_to_points(res["FlightDetails"]["Path"])
         except Exception as e:
             out["errors"].append(f"vertical range {i}: {e!r}")
             continue
 
-        points = path_to_points(res["FlightDetails"]["Path"])
         if len(points) == 0:
             continue
 
