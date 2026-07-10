@@ -24,17 +24,17 @@ from rio_visualizer.data.constants import (
     FIELDER_SLIDINGCATCH_ABILITY,
     FIELDER_STARTING_COORDINATES,
 )
-from pyRio.hit_simulator.hit_simulation import (
+from pyrio.hit_simulator.hit_simulation import (
     BatterAttributes,
     HitInputs,
     HitOverrides,
     simulate_hit,
 )
-from pyRio.hit_simulator import hit_simulation as hit_sim
-from pyRio.stat_file_parser import StatObj, EventObj, EventSearch
+from pyrio.hit_simulator import hit_simulation as hit_sim
+from pyrio.stat_file_parser import StatObj, EventObj, EventSearch
 
 try:
-    from pyRio import rio_tags
+    from pyrio import rio_tags
 except Exception:  # pragma: no cover - rio_tags is optional
     rio_tags = None
 
