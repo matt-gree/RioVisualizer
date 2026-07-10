@@ -2,3 +2,7 @@ pygame
 pyopengl
 pysimplegui
 numpy
+
+# Hit simulation engine (pyRio submodule). Run `git submodule update --init`
+# to fetch it, then these provide pyRio's runtime deps.
+-r pyRio/requirements.txt
