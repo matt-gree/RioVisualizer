@@ -270,6 +270,7 @@ export class HitRenderer {
     this.stadiumJsonCache = null;
     this.currentStadiumName = null;
     this._wallProfile = null; // per-azimuth outfield-wall distances (hero clamp)
+    this._foulAz = null;      // per-side fair/foul boundary azimuths (painted lines)
     this._stadiumMesh = null; // stream stadium mesh (HR truncation raycasts)
     this._lastShotShort = false; // last setHit resolved to the gentle cam
     this.pulsingMaterials = [];
@@ -381,9 +382,52 @@ export class HitRenderer {
     this.currentStadiumName = name;
     this.stadiumJsonCache = json;
     this._wallProfile = this._computeWallProfile(json);
+    this._foulAz = this._computeFoulAz(json);
     this.buildStadium();
     if (this.fixedCam) this.lockCamera();
     this._dirty = true;
+  }
+
+  // Fair/foul boundary azimuth per side, measured from the collision mesh:
+  // foul-side ground triangles carry the 0x80 flag, so the true painted
+  // line belongs exactly at the border between flagged and unflagged ground
+  // — NOT on the 1B/3B base corners, which sit slightly fair of it. Per
+  // side, the boundary is bracketed between the widest fair centroid and
+  // the narrowest foul centroid; their midpoint is the line.
+  _computeFoulAz(json) {
+    const fairMax = { right: -Infinity, left: -Infinity };
+    const foulMin = { right: Infinity, left: Infinity };
+    for (const box of json['Triangle Collections']) {
+      for (const coll of box['Triangles']) {
+        const pts = coll['Points'];
+        const step = coll['CollectionType'] === 0 ? 3 : 1;
+        for (let i = 0; i + 2 < pts.length; i += step) {
+          const t = pts[i + 2].CollisionType;
+          const base = t & 0x0f;
+          if (base === 0x02 || base === 0x03 || base === 0x05) continue; // walls / oob / back
+          const cx = (pts[i].Point.X + pts[i + 1].Point.X + pts[i + 2].Point.X) / 3;
+          const cz = (pts[i].Point.Z + pts[i + 1].Point.Z + pts[i + 2].Point.Z) / 3;
+          const r = Math.hypot(cx, cz);
+          if (r < 18 || r > 100) continue; // skip the home-plate area + beyond the wall
+          const az = Math.atan2(cx, cz);
+          if (Math.abs(az) > 1.1) continue;
+          const side = az >= 0 ? 'right' : 'left';
+          const a = Math.abs(az);
+          if ((t & 0xf0) === 0x80) { if (a < foulMin[side]) foulMin[side] = a; }
+          else if (a > fairMax[side]) fairMax[side] = a;
+        }
+      }
+    }
+    const out = {};
+    for (const side of ['right', 'left']) {
+      let az = null;
+      if (foulMin[side] < Infinity && fairMax[side] > -Infinity) {
+        az = (foulMin[side] + fairMax[side]) / 2;
+      }
+      // sanity window (34°–54°); a degenerate read falls back to true 45°
+      out[side] = az != null && az > 0.6 && az < 0.95 ? az : Math.PI / 4;
+    }
+    return out;
   }
 
   // Per-azimuth outfield-wall distance profile (game coords, horizontal),
@@ -728,13 +772,15 @@ export class HitRenderer {
       this.stadiumGroup.add(base);
     }
 
-    // painted foul lines: home plate out to the outfield wall along both
-    // lines (through the 1B/3B base coordinates), length from the stadium's
-    // own wall profile. A thin white strip just above the grass, built along
-    // +z inside a group so a Y-rotation aims it down its azimuth.
-    const FOUL_START_M = 1.2, FOUL_W = 0.24;
+    // painted foul lines: out to the outfield wall along each side's TRUE
+    // fair/foul boundary (measured from the collision mesh — see
+    // _computeFoulAz), length from the stadium's wall profile. A thin white
+    // strip just above the grass, built along +z inside a group so a
+    // Y-rotation aims it down its azimuth; starts past the batter's boxes
+    // so it never paints through them.
+    const FOUL_START_M = 3.2, FOUL_W = 0.24;
     for (const sx of [1, -1]) {
-      const az = sx * Math.atan2(18.95, 19.4); // through the base corners
+      const az = sx * (this._foulAz?.[sx === 1 ? 'right' : 'left'] ?? Math.PI / 4);
       const len = Math.max((this._wallDistanceAt(az) ?? 95) - FOUL_START_M, 1);
       const strip = new THREE.Mesh(new THREE.PlaneGeometry(FOUL_W, len), white);
       strip.rotation.x = -Math.PI / 2;
