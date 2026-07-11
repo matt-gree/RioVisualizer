@@ -728,6 +728,23 @@ export class HitRenderer {
       this.stadiumGroup.add(base);
     }
 
+    // painted foul lines: home plate out to the outfield wall along both
+    // lines (through the 1B/3B base coordinates), length from the stadium's
+    // own wall profile. A thin white strip just above the grass, built along
+    // +z inside a group so a Y-rotation aims it down its azimuth.
+    const FOUL_START_M = 1.2, FOUL_W = 0.24;
+    for (const sx of [1, -1]) {
+      const az = sx * Math.atan2(18.95, 19.4); // through the base corners
+      const len = Math.max((this._wallDistanceAt(az) ?? 95) - FOUL_START_M, 1);
+      const strip = new THREE.Mesh(new THREE.PlaneGeometry(FOUL_W, len), white);
+      strip.rotation.x = -Math.PI / 2;
+      strip.position.set(0, 0.05, FOUL_START_M + len / 2);
+      const holder = new THREE.Group();
+      holder.add(strip);
+      holder.rotation.y = az;
+      this.stadiumGroup.add(holder);
+    }
+
     // home plate: proper pentagon — flat edge toward the pitcher (+z), point
     // toward the catcher. Scaled up like the bases so it reads on broadcast.
     // Shape y maps to -z after rotation.x = -PI/2, so front edge = shape -y.
