@@ -79,6 +79,19 @@ const SECTIONS = [
       { key: 'show_curve_on_ground', label: 'Show curve on ground', type: 'check', def: false },
     ],
   },
+  {
+    // The named fixed-cam broadcast modes (renderer.js CAMERA MODES) are the
+    // character-spotlight overlay's camera system, but they're reusable
+    // anywhere HitRenderer draws a shot — this section previews them here so
+    // they can be tuned without going through the full OBS overlay.
+    title: 'Camera', open: false,
+    fields: [
+      { key: 'cinematic_preview', label: 'Cinematic camera preview (replaces orbit)', type: 'check', def: false },
+      { key: 'camera_mode', label: 'Camera mode', type: 'radio', def: 'broadcast',
+        options: [['broadcast', 'Broadcast'], ['follow', 'Follow'], ['hero', 'Hero (HR)'],
+                  ['gentle', 'Gentle (short)'], ['spray', 'Spray']] },
+    ],
+  },
 ];
 
 const STICK_KEYS = [['stick_up', '↑'], ['stick_left', '←'], ['stick_right', '→'], ['stick_down', '↓']];

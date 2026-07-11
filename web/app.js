@@ -3,28 +3,58 @@
 // Thin shell over the shared HitRenderer: wires the parameter form + stadium
 // picker + view-mode buttons to /api/simulate and /api/stadium. The OBS overlay
 // in PRSH is a separate, equally-thin driver over the same renderer core.
+//
+// The named fixed-cam broadcast modes (see CAMERA MODES in renderer.js) are
+// built for the character-spotlight overlay but aren't spotlight-specific, so
+// the "Camera" control section previews them here too. Previewing a mode
+// means swapping the debug orbit renderer for a cinematic fixedCam one (the
+// two are mutually exclusive per HitRenderer's constructor contract) — see
+// setCinematicPreview().
 import { buildControls } from './controls.js';
 import { buildStatPanel } from './statfile.js';
 import { HitRenderer } from './renderer.js';
 
-const renderer = new HitRenderer({
-  viewport: document.getElementById('viewport'),
-  labels: document.getElementById('labels'),
-  orbit: true,
-  cinematic: false,
-  viewMode: 'stream',
-});
-
+const viewportEl = document.getElementById('viewport');
+const labelsEl = document.getElementById('labels');
 const statusBox = document.getElementById('status');
 const stadiumSelect = document.getElementById('stadium');
 const detailsPre = document.getElementById('detailsPre');
 const jsonPre = document.getElementById('jsonPre');
 
+let viewModeState = 'stream';
+let cinematicPreview = false;
+let currentParams = {};
+let renderer = makeRenderer();
+
+function makeRenderer() {
+  return new HitRenderer({
+    viewport: viewportEl,
+    labels: labelsEl,
+    orbit: !cinematicPreview,
+    cinematic: cinematicPreview,
+    fixedCam: cinematicPreview,
+    viewMode: viewModeState,
+  });
+}
+
+// Swap renderers when the "Cinematic camera preview" toggle changes; a no-op
+// otherwise. The new instance starts with no stadium, so the current one is
+// re-fetched and re-applied before returning.
+async function setCinematicPreview(on) {
+  if (on === cinematicPreview) return;
+  cinematicPreview = on;
+  renderer.dispose();
+  renderer = makeRenderer();
+  if (stadiumSelect.value) await loadStadium(stadiumSelect.value);
+}
+
 let simSeq = 0;
 let debounceTimer;
 
 async function simulate(params) {
+  currentParams = params;
   jsonPre.textContent = JSON.stringify(params, null, 2);
+  await setCinematicPreview(params.cinematic_preview === true);
 
   const seq = ++simSeq;
   const resp = await fetch('/api/simulate', {
@@ -42,10 +72,16 @@ async function simulate(params) {
   statusBox.textContent = (sim.errors || []).join('\n');
   detailsPre.textContent = sim.details ? JSON.stringify(sim.details, null, 2) : '';
 
+  // the sim response carries no per-path star flag, so the debug tool tags
+  // paths itself when the form asked for a star swing (previews the golden
+  // shimmer trail; see renderer.js per-path flags)
+  if (params.is_star_hit === true) for (const p of sim.paths) p.star = true;
+
   renderer.setHit(sim, {
     unitsFeet: params.units_feet === true,
     showMaxHeight: params.show_max_height === true,
     showCurveOnGround: params.show_curve_on_ground === true,
+    ...(cinematicPreview ? { camera: params.camera_mode || 'broadcast' } : {}),
   });
 }
 
@@ -70,14 +106,17 @@ async function showStatHit(sim) {
   }
   const detail = sim.meta ? { event: sim.meta, ...sim.details } : sim.details;
   detailsPre.textContent = detail ? JSON.stringify(detail, null, 2) : '';
-  renderer.setHit(sim, {});
+  // recorded star swings get the golden shimmer trail
+  if (sim.meta && sim.meta.swing === 'Star') for (const p of (sim.paths || [])) p.star = true;
+  renderer.setHit(sim, cinematicPreview ? { camera: currentParams.camera_mode || 'broadcast' } : {});
 }
 
 for (const btn of document.querySelectorAll('[data-mode]')) {
   btn.addEventListener('click', () => {
     document.querySelectorAll('[data-mode]').forEach(b =>
       b.classList.toggle('on', b === btn));
-    renderer.setViewMode(btn.dataset.mode);
+    viewModeState = btn.dataset.mode;
+    renderer.setViewMode(viewModeState);
   });
 }
 

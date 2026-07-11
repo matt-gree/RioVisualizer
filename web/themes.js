@@ -16,6 +16,8 @@
 //
 // emissive: collision types rendered as glowing, pulsing surfaces (lava etc.)
 // foulMult: brightness multiplier for foul-territory variants of each type
+// moundPanels: { color, radius } — repaint the stadium's grass-typed panel
+//           triangles within `radius` m of the mound center (see Wario Palace)
 // decals:   flat colored circles drawn on the floor (positions approximate),
 //           e.g. Toy Field's HIT/COIN/bonus pads. color 'rainbow' uses a
 //           generated radial rainbow texture. No text — colors only.
@@ -99,6 +101,16 @@ export const THEMES = {
     },
     emissive: {},
     foulMult: 0.8,
+    // Wario Palace's mound area: muted purple, breaking from the sandy
+    // infield dirt everywhere else uses. infield.mound recolors the built
+    // dirt cone/rubber (_buildInfield); moundPanels repaints the stadium's
+    // OWN zig-zag panel geometry ringing the mound — grass-typed collision
+    // triangles within `radius` m of the mound center (buildStadium). The
+    // green base pads share that collision type ~19 m out and keep the
+    // palette color (the mound panel cluster ends ~11 m out, the pads start
+    // ~16 m out, so radius 13 splits them cleanly).
+    infield: { mound: 0x6f5478 },
+    moundPanels: { color: '#7c5a86', radius: 13 },
   },
 
   'Yoshi Park': {
