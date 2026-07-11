@@ -91,17 +91,18 @@ const HERO_SETTLE_MS = 1100;        // hero cam: look settles on the landing aft
 const HERO_WALL_MARGIN_M = 6;       // hero cam may chase this far past the wall, no further
 const FOLLOW_PUSH_M = 7;            // follow cam: push-in distance over the flight
 const FOLLOW_SETTLE_MS = 1000;      // follow cam: look settles after landing
-// gentle cam — the automatic short-hit variant of hero/follow, speaking the
-// SAME language as the big-hit cameras: an eased move TOWARD the play while
-// tracking the ball, sized for a shallow ball. A real push toward the
-// landing (follow pushes 7 m; gentle 4.5 m) plus a crane-up that keeps the
-// framing slightly wider than broadcast so the move stays easy to follow —
-// consistent with the long-hit treatment, just less dramatic.
-const GENTLE_RISE_M = 2.5;          // crane-up keeps the framing a touch wider
-const GENTLE_PUSH_M = 4.5;          // push toward the landing (follow uses 7)
-const GENTLE_MOVE_MS = 1600;        // minimum eased move duration (flight can run longer)
-const GENTLE_SETTLE_MS = 1200;      // look keeps settling this long after landing
-const GENTLE_LOOK_LERP = 0.07;      // match follow's tracking energy
+// gentle cam — the automatic short-hit variant: a scaled-down HERO crane.
+// The camera genuinely travels ONTO the field along a rising arc toward the
+// landing — the same movement language as the home-run treatment — framed a
+// touch wider (GENTLE_FIT_M vs hero's 56 m box) and paced over at least
+// GENTLE_MOVE_MS so a sub-second flight doesn't compress the move.
+const GENTLE_FIT_M = 100;            // framing box at the landing (hero fits 56) —
+                                    // generous so infield/shallow-outfield hits keep
+                                    // their location context; the crane ends a
+                                    // respectful distance from the landing spot
+const GENTLE_HOLD_MS = 250;         // contact hold before the crane starts
+const GENTLE_MOVE_MS = 2200;        // minimum crane duration (≈ a long-hit flight)
+const GENTLE_SETTLE_MS = 1100;      // look settles after the crane
 const GENTLE_RECOMMENDED_HOLD_MS = 2300; // see recommendedHoldMs()
 const RETURN_MS = 1150;             // clearHit({animate}) glide back to the broadcast pose
 const ANIM_TAIL_MS = 150;           // extra rendered frames so the final state lands on screen
@@ -510,10 +511,8 @@ export class HitRenderer {
     this.buildHitScene();
     if (this.cinematic) {
       if (this.fixedCam) {
-        const mode = this._resolveCameraMode();
-        // gentle eases from the camera's current pose — no snap reset
-        if (mode !== 'gentle') this.lockCamera();
-        this._setupCameraMode(mode);
+        this.lockCamera();
+        this._setupCameraMode(this._resolveCameraMode());
       } else {
         this._frameShot();
         this._totalAnimMs = this._fxMs + ANIM_TAIL_MS;
@@ -1116,13 +1115,12 @@ export class HitRenderer {
   //   'gentle'    — the short-hit variant of hero/follow, selected
   //       AUTOMATICALLY when either resolves on a flight landing closer than
   //       shortHitM (constructor option; default SHORT_HIT_DISTANCE_M).
-  //       The same language as the big-hit cameras at a smaller size: an
-  //       eased push TOWARD the landing (a scaled-down follow push) with a
-  //       crane-up that keeps the framing slightly wider than broadcast, and
-  //       follow-grade ball tracking. Consistent with the long-hit
-  //       treatment; deeper hits still out-dramatize it. Callers should
-  //       dwell longer after these land; see recommendedHoldMs(). Can be
-  //       requested explicitly.
+  //       Hero's crane at infield scale: the camera flies the same rising
+  //       arc ONTO the field toward the landing, framed a touch wider
+  //       (GENTLE_FIT_M) and paced over at least GENTLE_MOVE_MS so a
+  //       sub-second flight doesn't compress the move. Shares
+  //       _updateHeroCam outright. Callers should dwell longer after these
+  //       land; see recommendedHoldMs(). Can be requested explicitly.
   //   'spray'     — selected automatically by setHit(sim, { spray: true }).
   //       A PRESENTATION camera designed to hold on screen indefinitely: the
   //       framing takes in the whole field (outfield extent + home plate, not
@@ -1185,8 +1183,6 @@ export class HitRenderer {
       else if (name === 'gentle') this._setupGentleCam();
       else if (name === 'spray') this._setupSprayCam();
     }
-    // gentle captures the previous shot's look target in its setup, so the
-    // smoothed look state is cleared after setup (replay() clears it again)
     this._camLookCur = null;
     this._totalAnimMs = Math.max(this._fxMs, this._camMs) + ANIM_TAIL_MS;
   }
@@ -1263,33 +1259,42 @@ export class HitRenderer {
     this._camMs = this._flightMs + FOLLOW_SETTLE_MS;
   }
 
-  // Gentle short-hit cam: the same language as follow/hero — an eased push
-  // TOWARD the play while tracking the ball — sized for a shallow ball. The
-  // camera pushes toward the landing (a smaller follow push) and cranes up
-  // so the framing stays slightly wider than broadcast, keeping the livelier
-  // move easy to follow. Deeper hits still out-dramatize it; this just keeps
-  // every batted ball inside one camera vocabulary.
+  // Gentle short-hit cam: hero's crane at infield scale. The camera flies a
+  // rising arc from the broadcast pose ONTO the field, ending pulled back
+  // from the landing (offset + raised, GENTLE_FIT_M framing — a touch wider
+  // than hero's) while tracking the ball then settling on the landing.
+  // Builds hero-shaped state and runs on _updateHeroCam, so the movement
+  // language is literally shared; only the scale and pacing differ.
   _setupGentleCam() {
     const path = this.lastSim.paths[0];
     const landing = this._sceneLanding(path);
-    const from = this.camera.position.clone();
-    const look0 = this._camLookCur ? this._camLookCur.clone()
-      : new THREE.Vector3(...BROADCAST_LOOK);
-    const base = new THREE.Vector3(...BROADCAST_POS);
-    const toward = landing.clone().sub(base);
-    toward.y = 0;
-    if (toward.lengthSq() < 1e-4) toward.set(0, 0, 1);
-    toward.normalize();
-    const to = base.addScaledVector(toward, GENTLE_PUSH_M);
-    to.y += GENTLE_RISE_M;
+    let apexY = 0;
+    for (const p of path.points) apexY = Math.max(apexY, p[1]);
+
+    const from = new THREE.Vector3(...BROADCAST_POS);
+    const back = new THREE.Vector3(-landing.x, 0, -landing.z);
+    if (back.lengthSq() < 1e-4) back.set(0, 0, -1);
+    back.normalize();
+    const side = new THREE.Vector3(back.z, 0, -back.x);
+    const camDir = new THREE.Vector3()
+      .addScaledVector(back, 1.0)
+      .addScaledVector(side, 0.38)
+      .add(new THREE.Vector3(0, 0.55, 0))
+      .normalize();
+    const dist = this._fitDistance(new THREE.Vector3(GENTLE_FIT_M, Math.max(apexY, 14), GENTLE_FIT_M));
+    const end = landing.clone().addScaledVector(camDir, dist);
+    end.y = Math.max(end.y, 11);
+    const ctrl = from.clone().lerp(end, 0.5);
+    ctrl.y += Math.max(6, apexY * 0.5);
+
     this._camState = {
-      from,
-      to,
-      look0,
-      moveMs: Math.max(this._flightMs, GENTLE_MOVE_MS),
+      from, ctrl, end,
+      look0: new THREE.Vector3(...BROADCAST_LOOK),
       landingLook: landing.clone().add(new THREE.Vector3(0, 1.5, 0)),
+      glideMs: Math.max(this._flightMs, GENTLE_MOVE_MS),
+      holdMs: GENTLE_HOLD_MS,
     };
-    this._camMs = this._camState.moveMs + GENTLE_SETTLE_MS;
+    this._camMs = this._camState.glideMs + GENTLE_SETTLE_MS;
   }
 
   _setupSprayCam() {
@@ -1318,11 +1323,11 @@ export class HitRenderer {
       .addScaledVector(dirH, -1.0)
       .add(new THREE.Vector3(0, SPRAY_AERIAL, 0))
       .normalize();
-    const pos = center.clone().addScaledVector(d, this._fitDistance(size) * 1.08);
-    // the aerial angle can park the camera nearly overhead of home plate,
-    // dropping the plate below the FOV no matter the fit distance — enforce
-    // a horizontal standoff behind the plate proportional to camera height
-    const standoff = pos.y * 0.3;
+    const pos = center.clone().addScaledVector(d, this._fitDistance(size) * 1.12);
+    // sit well BEHIND home plate — the aerial angle otherwise parks the
+    // camera nearly on top of it and the trail convergence crowds the bottom
+    // edge; the generous standoff keeps the plate comfortably inside frame
+    const standoff = pos.y * 0.55;
     const behind = -(pos.x * dirH.x + pos.z * dirH.z);
     if (behind < standoff) pos.addScaledVector(dirH, -(standoff - behind));
     this._camState = {
@@ -1330,7 +1335,7 @@ export class HitRenderer {
       // aim between the field center and home plate — the plate (where every
       // trail converges) must never fall off the bottom of frame, and the
       // rebalance trades empty sky at the top for it
-      look: center.clone().multiplyScalar(0.8),
+      look: center.clone().multiplyScalar(0.72),
       // static until EVERY trail has drawn on, plus a settle beat
       orbitStartMs: SPRAY_STAGGER_MS * (this.lastSim.paths.length - 1)
         + SPRAY_REVEAL_MS + SPRAY_SETTLE_MS,
@@ -1347,7 +1352,8 @@ export class HitRenderer {
   }
 
   _updateHeroCam(st, elapsed) {
-    const u = clamp01((elapsed - HERO_HOLD_MS) / Math.max(st.glideMs - HERO_HOLD_MS, 1));
+    const hold = st.holdMs ?? HERO_HOLD_MS; // gentle reuses this crane at a shorter hold
+    const u = clamp01((elapsed - hold) / Math.max(st.glideMs - hold, 1));
     const e = easeInOutCubic(u);
     const s = 1 - e;
     this.camera.position.set(
@@ -1370,16 +1376,6 @@ export class HitRenderer {
     this.camera.lookAt(this._camLookCur);
   }
 
-  _updateGentleCam(st, elapsed) {
-    // eased push toward the play, paced with the flight (never shorter than
-    // GENTLE_MOVE_MS) — cubic ease-in-out for the smoothest acceleration
-    const k = easeInOutCubic(clamp01(elapsed / st.moveMs));
-    this.camera.position.lerpVectors(st.from, st.to, k);
-    if (!this._camLookCur) this._camLookCur = st.look0.clone();
-    const desired = this._playing ? this._ballScene : st.landingLook;
-    this._camLookCur.lerp(desired, GENTLE_LOOK_LERP);
-    this.camera.lookAt(this._camLookCur);
-  }
 
   // clearHit({animate}): eased glide from wherever the last shot left the
   // camera back to the locked broadcast pose (position + look together).
@@ -1466,9 +1462,9 @@ export class HitRenderer {
     if (this.fixedCam) {
       const st = this._camState;
       if (!st) return; // 'broadcast': the locked pose never moves
-      if (this._camModeName === 'hero') this._updateHeroCam(st, elapsed);
+      // gentle IS the hero crane at infield scale — same update, own state
+      if (this._camModeName === 'hero' || this._camModeName === 'gentle') this._updateHeroCam(st, elapsed);
       else if (this._camModeName === 'follow') this._updateFollowCam(st, elapsed);
-      else if (this._camModeName === 'gentle') this._updateGentleCam(st, elapsed);
       else if (this._camModeName === 'spray') this._updateSprayCam(st, now);
       else if (this._camModeName === 'return') this._updateReturnCam(st, now);
       return;
