@@ -13,6 +13,7 @@
 import { buildControls } from './controls.js';
 import { buildStatPanel } from './statfile.js';
 import { HitRenderer } from './renderer.js';
+import { hasNight } from './themes.js';
 
 const viewportEl = document.getElementById('viewport');
 const labelsEl = document.getElementById('labels');
@@ -23,6 +24,7 @@ const jsonPre = document.getElementById('jsonPre');
 
 let viewModeState = 'stream';
 let cinematicPreview = false;
+let nightMode = false;
 let currentParams = {};
 let renderer = makeRenderer();
 
@@ -34,6 +36,7 @@ function makeRenderer() {
     cinematic: cinematicPreview,
     fixedCam: cinematicPreview,
     viewMode: viewModeState,
+    night: nightMode,
   });
 }
 
@@ -93,8 +96,22 @@ function onParamsChanged(params) {
 async function loadStadium(name) {
   const resp = await fetch(`/api/stadium/${encodeURIComponent(name)}`);
   renderer.setStadium(name, await resp.json());
+  syncNightButton();
 }
 stadiumSelect.addEventListener('change', () => loadStadium(stadiumSelect.value));
+
+// Night: the park after dark, for parks whose theme has a night look.
+const nightBtn = document.getElementById('night');
+function syncNightButton() {
+  const available = hasNight(stadiumSelect.value);
+  nightBtn.disabled = !available;
+  nightBtn.classList.toggle('on', nightMode && available);
+}
+nightBtn.addEventListener('click', () => {
+  nightMode = !nightMode;
+  syncNightButton();
+  renderer.setNight(nightMode);
+});
 
 // Render a replayed stat-file event: switch to its stadium, then draw the hit.
 async function showStatHit(sim) {

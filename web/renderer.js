@@ -50,7 +50,8 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
-import { getTheme, COLLISION_TYPE_KEYS } from './themes.js';
+import { getTheme } from './themes.js';
+import { applyEnvironment as applyStreamEnvironment, buildStadium as buildStreamStadium, pulseGlow, setupSunShadows } from './stadium.js';
 
 const METERS_TO_FEET = 3.28084;
 const PATH_COLORS = [0xffffff, 0xffd24d, 0x6ecbff, 0xff8fe1, 0x9dff8f];
@@ -152,14 +153,6 @@ function contrastColor(c) {
   return c.map(v => 1 - v / 2);
 }
 
-function streamColor(t, theme) {
-  const key = COLLISION_TYPE_KEYS[t & 0x0f];
-  const hex = theme.palette[key] || '#ff00ff';
-  const c = new THREE.Color(hex);
-  if ((t & 0xf0) === 0x80) c.multiplyScalar(theme.foulMult);
-  return [c.r, c.g, c.b];
-}
-
 function disposeGroup(group) {
   group.traverse(obj => {
     if (obj.geometry) obj.geometry.dispose();
@@ -223,20 +216,6 @@ function makeGlowTexture() {
 }
 
 let _rainbowTexture = null;
-function makeRainbowTexture() {
-  if (_rainbowTexture) return _rainbowTexture;
-  const c = document.createElement('canvas');
-  c.width = c.height = 128;
-  const ctx = c.getContext('2d');
-  const g = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
-  const stops = ['#7a2fd4', '#2f55d4', '#2fb8d4', '#2fd45a', '#e8e02f', '#e8862f', '#d42b2b'];
-  stops.forEach((color, i) => g.addColorStop(i / (stops.length - 1), color));
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, 128, 128);
-  _rainbowTexture = new THREE.CanvasTexture(c);
-  return _rainbowTexture;
-}
-
 // whole=true → broadcast style: whole feet, no decimals ("342 ft")
 function fmt(v, feet, whole = false) {
   if (!feet) return `${v.toFixed(2)} m`;
@@ -259,11 +238,17 @@ export class HitRenderer {
    *                  which hero/follow swap for the gentle short-hit camera.
    *                  Default HitRenderer.SHORT_HIT_DISTANCE_M.
    */
-  constructor({ viewport, labels, orbit = true, cinematic = false, fixedCam = false, viewMode = 'stream', perf = false, shortHitM = null }) {
+  // shadows: sun + lamp shadow maps, baked once per stadium (see _bakeShadows)
+  // night:   use the park's after-dark theme where it has one (themes.js)
+  // autoRender: false leaves the frame loop off (the stills page drives it)
+  constructor({ viewport, labels, orbit = true, cinematic = false, fixedCam = false, viewMode = 'stream', perf = false, shortHitM = null, shadows = true, night = false, autoRender = true }) {
     this.viewport = viewport;
     this.viewMode = viewMode;
     this.cinematic = cinematic;
     this.fixedCam = fixedCam;
+    this.shadows = shadows;
+    this.night = night;
+    this._stadiumBuild = null; // stream-view park parts (stadium.js buildStadium)
     this.perf = perf; // log frames that blow the budget (opt-in, ?perf=1)
     this.shortHitM = shortHitM ?? HitRenderer.SHORT_HIT_DISTANCE_M;
 
@@ -318,6 +303,12 @@ export class HitRenderer {
     // the source gets scaled up), and uncapped this multiplies every antialiased
     // fragment — the main steady-state cost. 2x is plenty for a broadcast canvas.
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    // Shadow maps are baked once per stadium (the park and its lamps never
+    // move), so they cost nothing per frame — see _bakeShadows().
+    this.renderer.shadowMap.enabled = shadows;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.autoUpdate = false;
     viewport.appendChild(this.renderer.domElement);
 
     this.labelRenderer = new CSS2DRenderer({ element: labels });
@@ -331,7 +322,9 @@ export class HitRenderer {
 
     this.hemiLight = new THREE.HemisphereLight(0xffffff, 0x404040, 1);
     this.sunLight = new THREE.DirectionalLight(0xffffff, 1);
-    this.scene.add(this.hemiLight, this.sunLight);
+    setupSunShadows(this.sunLight);
+    this.sunLight.castShadow = shadows;
+    this.scene.add(this.hemiLight, this.sunLight, this.sunLight.target);
 
     // The game's X axis is mirrored relative to three.js (1B is +X but should
     // appear on the right from behind home plate), so everything renders inside
@@ -353,7 +346,26 @@ export class HitRenderer {
     this._startTime = performance.now();
     this._raf = null;
     this._animate = this._animate.bind(this);
-    this._animate();
+    if (autoRender) this._animate();
+  }
+
+  _theme() {
+    return getTheme(this.currentStadiumName, this.night);
+  }
+
+  /** Switch to / from the park's after-dark theme (no-op where it has none). */
+  setNight(on) {
+    on = !!on;
+    if (on === this.night) return;
+    this.night = on;
+    this.buildStadium();
+    this.buildHitScene();
+    this._dirty = true;
+  }
+
+  /** Re-bake the static shadow maps on the next frame (park or lights changed). */
+  _bakeShadows() {
+    if (this.shadows) this.renderer.shadowMap.needsUpdate = true;
   }
 
   resize() {
@@ -619,18 +631,18 @@ export class HitRenderer {
   }
 
   applyEnvironment(theme) {
+    if (this.scene.background?.dispose) this.scene.background.dispose();
     if (this.viewMode === 'stream') {
       this.viewport.style.background = `linear-gradient(${theme.skyTop}, ${theme.skyBottom})`;
-      this.scene.fog = new THREE.FogExp2(new THREE.Color(theme.fog), theme.fogDensity);
-      this.hemiLight.color.set(theme.hemi.sky);
-      this.hemiLight.groundColor.set(theme.hemi.ground);
-      this.hemiLight.intensity = theme.hemi.intensity;
-      this.sunLight.color.set(theme.sun.color);
-      this.sunLight.intensity = theme.sun.intensity;
-      this.sunLight.position.set(...theme.sun.position);
+      applyStreamEnvironment(this.scene, this.hemiLight, this.sunLight, theme);
+      this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      this.renderer.toneMappingExposure = theme.exposure ?? 1;
     } else {
       this.viewport.style.background = '#0a0a12';
+      this.scene.background = null;
       this.scene.fog = null;
+      this.renderer.toneMapping = THREE.NoToneMapping;
+      this.renderer.toneMappingExposure = 1;
     }
   }
 
@@ -640,47 +652,34 @@ export class HitRenderer {
     this.pulsingMaterials = [];
     this._handBoxes = null;
     this._stadiumMesh = null;
+    this._stadiumBuild = null;
 
-    const theme = getTheme(this.currentStadiumName);
+    const theme = this._theme();
     this.applyEnvironment(theme);
 
+    if (this.viewMode === 'stream') {
+      const built = buildStreamStadium(this.stadiumJsonCache, theme, { shadows: this.shadows });
+      this.stadiumGroup.add(built.group);
+      this._stadiumBuild = built;
+      this._stadiumMesh = built.base; // HR flight-truncation raycast target
+      this.pulsingMaterials = built.pulsing;
+      this._buildInfield(theme);
+      this._bakeShadows();
+      return;
+    }
+
+    // Debug view: every collision triangle in its type color, with edges.
     const positions = [], colors = [];
     const edgePositions = [], edgeColors = [];
-    const emissivePositions = {}; // hex color -> positions array (stream lava etc.)
-
-    // theme.moundPanels: repaint the zig-zag grass-typed panels ringing the
-    // mound (Wario Palace). The green base pads share the same collision type
-    // ~19 m out, so membership is by triangle-centroid distance from the mound
-    // center, not by type alone — the pads keep the palette green.
-    const mp = this.viewMode === 'stream' ? theme.moundPanels : null;
-    const mpColor = mp ? (() => { const c = new THREE.Color(mp.color); return [c.r, c.g, c.b]; })() : null;
-    const mpR2 = mp ? (mp.radius ?? 13) ** 2 : 0;
-
     const pushTri = (pa, pb, pc, collisionType) => {
       // stadium data is y-down; flip to y-up like the pygame renderer does
       const tri = [pa, pb, pc].map(p => [p.X, -p.Y, p.Z]);
-
-      if (this.viewMode === 'stream') {
-        const key = COLLISION_TYPE_KEYS[collisionType & 0x0f];
-        const glow = theme.emissive[key];
-        if (glow) {
-          (emissivePositions[glow] ||= []).push(...tri[0], ...tri[1], ...tri[2]);
-          return;
-        }
-        let c = streamColor(collisionType, theme);
-        if (mpColor && key === 'grass') {
-          const cx = (pa.X + pb.X + pc.X) / 3, cz = (pa.Z + pb.Z + pc.Z) / 3 - MOUND_Z;
-          if (cx * cx + cz * cz < mpR2) c = mpColor;
-        }
-        for (const v of tri) { positions.push(...v); colors.push(...c); }
-      } else {
-        const c = debugColor(collisionType);
-        const e = contrastColor(c);
-        for (const v of tri) { positions.push(...v); colors.push(...c); }
-        for (const [i, j] of [[0, 1], [1, 2], [2, 0]]) {
-          edgePositions.push(...tri[i], ...tri[j]);
-          edgeColors.push(...e, ...e);
-        }
+      const c = debugColor(collisionType);
+      const e = contrastColor(c);
+      for (const v of tri) { positions.push(...v); colors.push(...c); }
+      for (const [i, j] of [[0, 1], [1, 2], [2, 0]]) {
+        edgePositions.push(...tri[i], ...tri[j]);
+        edgeColors.push(...e, ...e);
       }
     };
 
@@ -702,47 +701,16 @@ export class HitRenderer {
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
     geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    this.stadiumGroup.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+      vertexColors: true, side: THREE.DoubleSide,
+      polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
+    })));
 
-    if (this.viewMode === 'stream') {
-      geo.computeVertexNormals();
-      const stadiumMesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({
-        vertexColors: true, side: THREE.DoubleSide,
-      }));
-      this.stadiumGroup.add(stadiumMesh);
-      this._stadiumMesh = stadiumMesh; // HR flight-truncation raycast target
-
-      for (const [hex, pos] of Object.entries(emissivePositions)) {
-        const eg = new THREE.BufferGeometry();
-        eg.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-        const mat = new THREE.MeshBasicMaterial({ color: hex, side: THREE.DoubleSide });
-        mat.userData.baseColor = new THREE.Color(hex);
-        this.pulsingMaterials.push(mat);
-        this.stadiumGroup.add(new THREE.Mesh(eg, mat));
-      }
-
-      for (const d of theme.decals || []) {
-        const mat = d.color === 'rainbow'
-          ? new THREE.MeshBasicMaterial({ map: makeRainbowTexture(), side: THREE.DoubleSide })
-          : new THREE.MeshBasicMaterial({ color: d.color, side: THREE.DoubleSide });
-        const pad = new THREE.Mesh(new THREE.CircleGeometry(d.r, 48), mat);
-        pad.rotation.x = -Math.PI / 2;
-        pad.position.set(d.x, 0.06, d.z);
-        this.stadiumGroup.add(pad);
-      }
-
-      this._buildInfield(theme);
-    } else {
-      this.stadiumGroup.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
-        vertexColors: true, side: THREE.DoubleSide,
-        polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
-      })));
-
-      const edgeGeo = new THREE.BufferGeometry();
-      edgeGeo.setAttribute('position', new THREE.Float32BufferAttribute(edgePositions, 3));
-      edgeGeo.setAttribute('color', new THREE.Float32BufferAttribute(edgeColors, 3));
-      this.stadiumGroup.add(new THREE.LineSegments(edgeGeo,
-        new THREE.LineBasicMaterial({ vertexColors: true })));
-    }
+    const edgeGeo = new THREE.BufferGeometry();
+    edgeGeo.setAttribute('position', new THREE.Float32BufferAttribute(edgePositions, 3));
+    edgeGeo.setAttribute('color', new THREE.Float32BufferAttribute(edgeColors, 3));
+    this.stadiumGroup.add(new THREE.LineSegments(edgeGeo,
+      new THREE.LineBasicMaterial({ vertexColors: true })));
   }
 
   // Bases, home plate, batter's boxes + pitcher's mound (stream view). Every
@@ -757,6 +725,7 @@ export class HitRenderer {
 
     // mound: low dirt cone + rubber, centered on the pitching coordinate
     const mound = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 3.0, 0.42, 32), dirt);
+    mound.castShadow = mound.receiveShadow = this.shadows;
     mound.position.set(0, 0.21, MOUND_Z);
     this.stadiumGroup.add(mound);
     const rubber = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.06, 0.22), white);
@@ -853,7 +822,7 @@ export class HitRenderer {
     if (!this.lastSim) return;
     const sim = this.lastSim, opts = this.lastOpts;
     const stream = this.viewMode === 'stream';
-    const theme = getTheme(this.currentStadiumName);
+    const theme = this._theme();
     // trail effects (progressive tube reveal, red fade, HR/star crawl, marker
     // gating) only run in cinematic stream mode; orbit/debug keeps thin
     // static lines
@@ -1583,12 +1552,7 @@ export class HitRenderer {
 
   _renderFrame(now, pulsing) {
     // hazard pulse in stream view (only when there are emissive materials)
-    if (pulsing) {
-      const pulse = 0.82 + 0.18 * Math.sin(now / 280);
-      for (const mat of this.pulsingMaterials) {
-        mat.color.copy(mat.userData.baseColor).multiplyScalar(pulse);
-      }
-    }
+    if (pulsing) pulseGlow(this.pulsingMaterials, now);
     const t0 = this.perf ? performance.now() : 0;
     this.renderer.render(this.scene, this.camera);
     this.labelRenderer.render(this.scene, this.camera);
@@ -1603,6 +1567,7 @@ export class HitRenderer {
     window.removeEventListener('resize', this._onResize);
     disposeGroup(this.stadiumGroup);
     disposeGroup(this.hitGroup);
+    if (this.scene.background?.dispose) this.scene.background.dispose();
     this.renderer.dispose();
     if (this.renderer.domElement.parentNode) {
       this.renderer.domElement.parentNode.removeChild(this.renderer.domElement);
