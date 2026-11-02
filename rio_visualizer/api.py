@@ -53,16 +53,19 @@ DEFAULT_STADIUM = "Mario Stadium"
 # HitOverrides, run simulate_hit, and translate the HitResult back.
 
 def _resolve_star(is_star_hit, swing, num_stars, charge_up, is_captain,
-                  captain_star_hit_pitch, non_captain_star_swing):
+                  captain_star_hit_pitch, non_captain_star_swing,
+                  five_star_attempt=False):
     """Reduce the visualizer's (num_stars, is_batter_captain) controls to pyRio's
-    is_star / five_star_dinger booleans, mirroring the pre-pipeline star
+    is_star / five_star_attempt booleans, mirroring the pre-pipeline star
     resolution the old calc_batting.calculateValues did. pyRio's own
     _resolve_star_swing then performs the captain/non-captain split from the
-    character's attributes. Returns (is_star, five_star_dinger)."""
+    character's attributes. Returns (is_star, five_star_attempt)."""
     if not is_star_hit or swing == BUNT or num_stars == 0:
         return False, False
-    # Fully-charged 5-star swing -> Moonshot (the connected 5-star dinger).
-    if charge_up == 1.0 and num_stars >= 5:
+    # Moonshot attempt, connected or failed. The controls set it with a
+    # fully-charged 5-star swing, but a recorded star swing has its charge
+    # zeroed, so a recorded attempt has to be passed in as five_star_attempt.
+    if five_star_attempt or (charge_up == 1.0 and num_stars >= 5):
         return True, True
     if captain_star_hit_pitch == 0:
         # Non-captain character: only a real non-captain star swing qualifies.
@@ -83,7 +86,7 @@ def build_hit_inputs(**kwargs):
     charge_up = kwargs.get("charge_up", 0.0)
 
     attrs = BatterAttributes.from_name(batter_id)
-    is_star, five_star_dinger = _resolve_star(
+    is_star, five_star_attempt = _resolve_star(
         kwargs.get("is_star_hit", False),
         swing,
         kwargs.get("num_stars", 4),
@@ -91,6 +94,7 @@ def build_hit_inputs(**kwargs):
         kwargs.get("is_batter_captain", False),
         attrs.captain_star_hit_pitch,
         attrs.non_captain_star_swing,
+        kwargs.get("five_star_attempt", False),
     )
 
     starred = kwargs.get("is_starred", False)
@@ -119,7 +123,7 @@ def build_hit_inputs(**kwargs):
         batter_hand=kwargs.get("handedness", 0),
         swing=swing,
         is_star=is_star,
-        five_star_dinger=five_star_dinger,
+        five_star_attempt=five_star_attempt,
         charge_up=charge_up,
         charge_down=kwargs.get("charge_down", 0.0),
         chem_links=kwargs.get("chem", 0),
