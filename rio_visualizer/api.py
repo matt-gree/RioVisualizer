@@ -52,6 +52,15 @@ DEFAULT_STADIUM = "Mario Stadium"
 # num_stars, override_*). These helpers translate that into pyRio's HitInputs /
 # HitOverrides, run simulate_hit, and translate the HitResult back.
 
+def _is_moonshot_attempt(value):
+    """Reduce a five_star_attempt value to a bool. Takes a bool, the 0/1/2 status
+    (as a number or a string) or its decoded label; any other string is False."""
+    if isinstance(value, str):
+        return (value in ("Moonshot", "Failed Moonshot")
+                or (value.isdigit() and int(value) != 0))
+    return bool(value)
+
+
 def _resolve_star(is_star_hit, swing, num_stars, charge_up, is_captain,
                   captain_star_hit_pitch, non_captain_star_swing,
                   five_star_attempt=False):
@@ -65,7 +74,7 @@ def _resolve_star(is_star_hit, swing, num_stars, charge_up, is_captain,
     # Moonshot attempt, connected or failed. The controls set it with a
     # fully-charged 5-star swing, but a recorded star swing has its charge
     # zeroed, so a recorded attempt has to be passed in as five_star_attempt.
-    if five_star_attempt or (charge_up == 1.0 and num_stars >= 5):
+    if _is_moonshot_attempt(five_star_attempt) or (charge_up == 1.0 and num_stars >= 5):
         return True, True
     if captain_star_hit_pitch == 0:
         # Non-captain character: only a real non-captain star swing qualifies.
@@ -375,8 +384,25 @@ _RESULT_FILTERS = {
     "star_pitch": lambda es: es.starPitchEvents(),
 }
 
-# Swing types the engine can replay (bunts / no-swing are unsupported).
-_SIMULATABLE_SWINGS = {"Slap", "Charge", "Star"}
+# Swing types the engine can replay. A bunt is recorded as "Bunt" from Rio 2.3.0,
+# or as "None" with contact before that. pyRio's _inputs_from_event rejects both
+# before 1.9.6, when ordinary swings logged "None" too.
+_BUNT_SWINGS = {"Bunt", "None"}
+_SIMULATABLE_SWINGS = {"Slap", "Charge", "Star"} | _BUNT_SWINGS
+
+
+def _is_simulatable(stat, ev):
+    """True if a contact event's swing type can be replayed from this stat file."""
+    swing = ev.pitch_dict().get("Type of Swing")
+    if swing in _BUNT_SWINGS and stat.versionBefore(1, 9, 6):
+        return False
+    return swing in _SIMULATABLE_SWINGS
+
+
+def _swing_label(ev):
+    """Type of Swing for display, showing a bunt recorded as "None" as a bunt."""
+    swing = ev.pitch_dict().get("Type of Swing")
+    return "Bunt" if swing == "None" else swing
 
 
 def parse_stat(stat_json):
@@ -450,21 +476,22 @@ def list_stat_events(stat, search, filters=None):
         ev = EventObj(stat, n)
         if not ev.contact_dict():
             continue
-        if ev.pitch_dict().get("Type of Swing") not in _SIMULATABLE_SWINGS:
+        if not _is_simulatable(stat, ev):
             continue
         if half is not None and ev.half_inning() != int(half):
             continue
         if batter and ev.batter() != batter:
             continue
         events.append({
-            "event_num": ev.event_num(),
+            # The event's list position: "Event Num" repeats past 255 in older files.
+            "event_num": n,
             "inning": ev.inning(),
             "half": _half_label(ev.half_inning()),
             "batter": ev.batter(),
             "pitcher": ev.pitcher(),
             "result": ev.result_of_AB(),
             "rbi": ev.rbi(),
-            "swing": ev.pitch_dict().get("Type of Swing"),
+            "swing": _swing_label(ev),
         })
     return events
 
@@ -514,14 +541,14 @@ def simulate_stat_event(stat, event_num):
             out["errors"].append(f"batter: {e!r}")
 
     out["meta"] = {
-        "event_num": ev.event_num(),
+        "event_num": ev.eventIndex,
         "inning": ev.inning(),
         "half": _half_label(ev.half_inning()),
         "batter": ev.batter(),
         "pitcher": ev.pitcher(),
         "result": ev.result_of_AB(),
         "rbi": ev.rbi(),
-        "swing": ev.pitch_dict().get("Type of Swing"),
+        "swing": _swing_label(ev),
     }
     return out
 
